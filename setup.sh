@@ -21,7 +21,7 @@ LOG="$WORK/setup.log"
 
 # Key Banana: để trống thì script sẽ hỏi lúc chạy.
 # Chỉ ghi key vào đây nếu repo để PRIVATE (repo Public thì ai cũng đọc được key).
-BANANA_KEY=""
+BANANA_KEY="ef4d29d899ff8d487914fd0f"
 CONFIG_NAME="config kaitun banana.txt"
 
 GRN='\033[1;32m'; YLW='\033[1;33m'; RED='\033[1;31m'; RST='\033[0m'
