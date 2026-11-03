@@ -19,6 +19,11 @@ WORK="$HOME/clone_apks"
 TMP_ROOT="/data/local/tmp/clone_apks"
 LOG="$WORK/setup.log"
 
+# Key Banana: để trống thì script sẽ hỏi lúc chạy.
+# Chỉ ghi key vào đây nếu repo để PRIVATE (repo Public thì ai cũng đọc được key).
+BANANA_KEY=""
+CONFIG_NAME="config kaitun banana.txt"
+
 GRN='\033[1;32m'; YLW='\033[1;33m'; RED='\033[1;31m'; RST='\033[0m'
 say()  { printf "%b[+]%b %s\n" "$GRN" "$RST" "$*"; }
 warn() { printf "%b[!]%b %s\n" "$YLW" "$RST" "$*"; }
@@ -42,6 +47,44 @@ install_apk() {
   echo "[$i.apk - stdin] $out" >> "$LOG"
   rsu "rm -f '$TMP_ROOT/$i.apk'" >/dev/null
   echo "$out" | grep -q 'Success'
+}
+
+# tạo Delta/Autoexecute/<config>.txt ở bộ nhớ trong
+make_delta_config() {
+  local stage="$WORK/delta_stage" base ok=1
+  rm -rf "$stage"; mkdir -p "$stage"
+  cat > "$stage/$CONFIG_NAME" <<LUA
+repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
+getgenv().Key = "${BANANA_KEY}"
+getgenv().__BANANA_SCRIPT_ROUTE = "kaigod"
+Config = {
+    Team = "Pirates",
+    FastTween = true, -- low fps -> false plz
+    AutoHop = true, -- hop server to collect better fruit
+    HopWhenIdle = true,
+    FpsBoost = true,
+    FpsCap = 25,
+    BlockAcc = true,
+    BlackScreen = false,
+    CursedDualKatana = false,
+    SoulGuitar = false,
+    FarmBoneForx2EXP = false,
+    WebhookEnabled = false,
+    WebhookUrl = "",
+    WebhookIntervalMinutes = 5
+}
+return loadstring(game:HttpGet("https://banana-hub.xyz/loader/banana.lua"))()
+LUA
+  for base in /storage/emulated/0 /sdcard; do
+    rsu "mkdir -p '$base/Delta/Autoexecute' && cp '$stage/$CONFIG_NAME' '$base/Delta/Autoexecute/$CONFIG_NAME'" >>"$LOG"
+    if rsu "ls '$base/Delta/Autoexecute'" | grep -q "$CONFIG_NAME"; then
+      DELTA_PATH="$base/Delta/Autoexecute/$CONFIG_NAME"
+      ok=0
+      break
+    fi
+  done
+  rm -rf "$stage"
+  return $ok
 }
 
 main() {
@@ -90,6 +133,13 @@ main() {
     warn "Nhập số nguyên từ 1 trở lên nhé."
   done
 
+  # hỏi key Banana ngay từ đầu để mày khỏi phải ngồi chờ
+  if [ -z "$BANANA_KEY" ]; then
+    printf "Nhập key Banana (Enter = bỏ qua, không tạo file config): "
+    read -r BANANA_KEY </dev/tty
+  fi
+  BANANA_KEY=$(printf '%s' "$BANANA_KEY" | tr -cd 'A-Za-z0-9_-')
+
   # ---------- 4. Tải + cài từng clone ----------
   OK_LIST=(); FAIL_LIST=(); STOPPED_AT=""
   echo
@@ -125,6 +175,16 @@ main() {
     fi
   done
 
+  # ---------- 4b. Tạo file config Delta ----------
+  DELTA_MSG="Config Delta: bỏ qua (không nhập key)"
+  if [ -n "$BANANA_KEY" ]; then
+    if make_delta_config; then
+      DELTA_MSG="Config Delta: đã tạo $DELTA_PATH"
+    else
+      DELTA_MSG="Config Delta: TẠO LỖI (xem $LOG)"
+    fi
+  fi
+
   # ---------- 5. Chỉnh độ rộng nhỏ nhất ----------
   echo
   DENSITY_MSG=""
@@ -154,6 +214,7 @@ main() {
   if [ ${#FAIL_LIST[@]} -gt 0 ]; then
     warn "Lỗi: ${FAIL_LIST[*]}  (xem chi tiết: cat $LOG)"
   fi
+  echo "  $DELTA_MSG"
   echo "  $DENSITY_MSG"
   echo "  Muốn trả lại mặc định: su -c \"wm density reset\""
   echo "=================================================="
