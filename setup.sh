@@ -21,7 +21,7 @@ LOG="$WORK/setup.log"
 
 # Key Banana: để trống thì script sẽ hỏi lúc chạy.
 # Chỉ ghi key vào đây nếu repo để PRIVATE (repo Public thì ai cũng đọc được key).
-BANANA_KEY="ef4d29d899ff8d487914fd0f"
+BANANA_KEY=""
 CONFIG_NAME="config kaitun banana.txt"
 
 GRN='\033[1;32m'; YLW='\033[1;33m'; RED='\033[1;31m'; RST='\033[0m'
@@ -140,6 +140,28 @@ main() {
   fi
   BANANA_KEY=$(printf '%s' "$BANANA_KEY" | tr -cd 'A-Za-z0-9_-')
 
+  # ---------- 3c. Cài QuickBubble (bắt buộc, luôn chạy) ----------
+  echo
+  QB_MSG="QuickBubble: chưa cài"
+  qb="$WORK/QuickBubble.apk"
+  printf "Tải QuickBubble.apk ... "
+  code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$qb" -w '%{http_code}' "$BASE_URL/QuickBubble.apk" </dev/null)
+  if [ "$code" != "200" ] || [ ! -s "$qb" ]; then
+    rm -f "$qb"
+    echo "lỗi tải (HTTP $code)"
+    QB_MSG="QuickBubble: LỖI TẢI (HTTP $code), kiểm tra đã up QuickBubble.apk lên Release chưa"
+  else
+    printf "xong, đang cài ... "
+    if install_apk "$qb" "QuickBubble"; then
+      echo "OK"
+      QB_MSG="QuickBubble: đã cài"
+      rm -f "$qb"
+    else
+      echo "lỗi cài"
+      QB_MSG="QuickBubble: LỖI CÀI (xem $LOG)"
+    fi
+  fi
+
   # ---------- 4. Tải + cài từng clone ----------
   OK_LIST=(); FAIL_LIST=(); STOPPED_AT=""
   echo
@@ -214,6 +236,7 @@ main() {
   if [ ${#FAIL_LIST[@]} -gt 0 ]; then
     warn "Lỗi: ${FAIL_LIST[*]}  (xem chi tiết: cat $LOG)"
   fi
+  echo "  $QB_MSG"
   echo "  $DELTA_MSG"
   echo "  $DENSITY_MSG"
   echo "  Muốn trả lại mặc định: su -c \"wm density reset\""
