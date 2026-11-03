@@ -65,12 +65,21 @@ main() {
   say "Đã có root."
 
   # ---------- 2. Cài gói cho Termux ----------
-  say "Đang cài gói cần thiết: $PACKAGES"
+  say "Đang cập nhật Termux và cài gói: $PACKAGES (có thể mất vài phút)"
   export DEBIAN_FRONTEND=noninteractive
   pkg update -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 \
     || warn "pkg update lỗi (bỏ qua, xem $LOG)"
+  # nâng cấp toàn bộ để curl / openssl không bị lệch phiên bản
+  pkg upgrade -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 \
+    || warn "pkg upgrade lỗi (xem $LOG)"
   pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES </dev/null >>"$LOG" 2>&1 \
     || warn "Có gói cài lỗi (xem $LOG)"
+
+  # kiểm tra curl còn chạy được không trước khi tải APK
+  if ! curl --version >/dev/null 2>&1; then
+    err "curl bị hỏng sau khi cập nhật gói. Chạy: pkg update -y && pkg upgrade -y rồi chạy lại lệnh."
+    return 1
+  fi
 
   # ---------- 3. Hỏi số clone ----------
   echo
