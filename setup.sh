@@ -1,9 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
 #  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG
-#  - Tải song song đa luồng, bỏ pkg upgrade
+#  - Tự ấn Y khi tải gói, bỏ pkg upgrade
 #  - Chỉnh độ rộng lên đầu
-#  - Ép xoay dọc khi lấy data, không bật app ở cuối
+#  - Ép xoay dọc khi lấy data, tự phục hồi
+#  - Không bật app ở cuối
 # ============================================================
 
 # ---------- CHỈ SỬA 3 DÒNG NÀY ----------
@@ -19,7 +20,7 @@ WORK="$HOME/clone_apks"
 TMP_ROOT="/data/local/tmp/clone_apks"
 LOG="$WORK/setup.log"
 
-BANANA_KEY="ef4d29d899ff8d487914fd0f"
+BANANA_KEY=""
 CONFIG_NAME="config kaitun banana.txt"
 
 GRN='\033[1;32m'; YLW='\033[1;33m'; RED='\033[1;31m'; RST='\033[0m'
@@ -118,11 +119,13 @@ init_apps_data() {
   echo ""
   say "=== KHỞI TẠO DỮ LIỆU BAN ĐẦU CHO CÁC CLONE ==="
   
-  # Lưu lại cài đặt xoay màn hình cũ
-  OLD_ROT=$(rsu "settings get system user_rotation")
-  OLD_ACCEL=$(rsu "settings get system accelerometer_rotation")
+  # Lưu lại trạng thái xoay màn hình cũ
+  OLD_ROT=$(rsu "settings get system user_rotation" | tr -d '\r\n')
+  OLD_ACCEL=$(rsu "settings get system accelerometer_rotation" | tr -d '\r\n')
+  [ -z "$OLD_ROT" ] || [ "$OLD_ROT" = "null" ] && OLD_ROT="0"
+  [ -z "$OLD_ACCEL" ] || [ "$OLD_ACCEL" = "null" ] && OLD_ACCEL="1"
 
-  # Ép cố định màn hình dọc
+  # Ép cố định màn hình dọc trong lúc lấy data
   rsu "settings put system accelerometer_rotation 0"
   rsu "settings put system user_rotation 0"
 
@@ -139,7 +142,6 @@ init_apps_data() {
     printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
     
-    # Dùng am start không có -W để không block Termux
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
     else
@@ -154,7 +156,7 @@ init_apps_data() {
       wait_time=$((wait_time+1))
     done
     
-    # Đóng app ngay lập tức
+    # Đóng app ngay lập tức sau khi lấy xong data
     rsu "am force-stop $pkg" >/dev/null 2>&1
     sleep 1
     
@@ -166,7 +168,7 @@ init_apps_data() {
     fi
   done
 
-  # Phục hồi lại cài đặt xoay màn hình
+  # Phục hồi lại cài đặt xoay màn hình ban đầu
   rsu "settings put system user_rotation $OLD_ROT"
   rsu "settings put system accelerometer_rotation $OLD_ACCEL"
 }
@@ -291,7 +293,6 @@ inject_cookies_interactive() {
   done
   
   LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#valid_cookies[@]} cookie sống)."
-  # Đã bỏ hoàn toàn hàm open_apps_final ở đây
 }
 
 main() {
@@ -341,10 +342,12 @@ main() {
   echo "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
   rm -rf $PREFIX/var/lib/apt/lists/*
 
-  say "Đang cập nhật Termux và cài gói: $PACKAGES (Bỏ qua upgrade)..."
+  say "Đang cập nhật Termux và cài gói: $PACKAGES..."
   export DEBIAN_FRONTEND=noninteractive
-  pkg update -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 || warn "pkg update lỗi"
-  pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES </dev/null >>"$LOG" 2>&1 || warn "Có gói cài lỗi"
+  
+  # Dùng yes | để tự động trả lời Y cho mọi câu hỏi
+  yes | pkg update -y -o Dpkg::Options::="--force-confold" >>"$LOG" 2>&1 || warn "pkg update lỗi"
+  yes | pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES >>"$LOG" 2>&1 || warn "Có gói cài lỗi"
 
   if ! curl --version >/dev/null 2>&1; then
     err "curl bị hỏng."
