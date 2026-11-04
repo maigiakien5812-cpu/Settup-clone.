@@ -1,11 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
-#  SETUP CLONE APK - chạy trong Termux trên UGPhone (có root)
-#  - Tự đổi mirror Termux sang China (Tsinghua) chống lỗi sync
-#  - Cài gói cần thiết cho Termux
-#  - Hỏi số clone, tải 1.apk -> N.apk từ GitHub, cài im lặng bằng root
-#  - Chỉnh độ rộng nhỏ nhất (smallest width) của máy lên 750
-#  - Tự động khởi tạo DB cho app, nhận danh sách cookie và phân bổ
+#  SETUP CLONE APK - TỐI ƯU TỐC ĐỘ
+#  - Tải song song đa luồng
+#  - Bỏ qua pkg upgrade để chạy nhanh
 # ============================================================
 
 # ---------- CHỈ SỬA 3 DÒNG NÀY ----------
@@ -15,7 +12,7 @@ GH_TAG="apk"                   # tên tag của Release chứa 1.apk, 2.apk, ...
 # ----------------------------------------
 
 TARGET_SW=750
-PACKAGES="curl wget git python nano tsu"
+PACKAGES="curl wget git python nano tsu aapt"
 BASE_URL="https://github.com/${GH_USER}/${GH_REPO}/releases/download/${GH_TAG}"
 WORK="$HOME/clone_apks"
 TMP_ROOT="/data/local/tmp/clone_apks"
@@ -33,7 +30,7 @@ rsu() { $SU -c "$1" </dev/null 2>&1; }
 
 install_apk() {
   local f="$1" i="$2" out size
-  out=$(rsu "mkdir -p '$TMP_ROOT' && cp '$f' '$TMP_ROOT/$i.apk' && chmod 644 '$TMP_ROOT/$i.apk' && pm install -r -g '$TMP_ROOT/$i.apk'")
+  out=$(rsu "cp '$f' '$TMP_ROOT/$i.apk' && chmod 644 '$TMP_ROOT/$i.apk' && pm install -r -g '$TMP_ROOT/$i.apk'")
   echo "[$i.apk] $out" >> "$LOG"
   if echo "$out" | grep -q 'Success'; then
     rsu "rm -f '$TMP_ROOT/$i.apk'" >/dev/null
@@ -129,7 +126,7 @@ init_apps_data() {
       continue
     fi
     
-    printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
+    printf "[Clone %s] Đang lấy data ngầm ... " "$i"
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
@@ -152,7 +149,7 @@ init_apps_data() {
       DB_MAP[$i]="$db"
       echo "OK"
     else
-      echo "Thất bại (Sẽ thử tìm lại lúc ghi cookie)"
+      echo "Thất bại"
     fi
   done
 }
@@ -167,7 +164,6 @@ inject_cookie_db() {
   fi
 
   if [ -z "$db" ] || ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
-    echo "[login $i] không thấy file Cookies của $pkg" >>"$LOG"
     return 2
   fi
   
@@ -195,7 +191,7 @@ inject_cookie_db() {
 open_apps_final() {
   local i pkg act
   echo ""
-  say "=== BẬT LẠI CÁC APP ĐỂ LOAD COOKIE ==="
+  say "=== BẬT LẠI CÁC APP ==="
   for i in "${OK_LIST[@]}"; do
     pkg="${PKG_MAP[$i]:-}"
     [ -z "$pkg" ] && continue
@@ -206,7 +202,7 @@ open_apps_final() {
     else
       rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
     fi
-    sleep 2
+    sleep 1
     echo "OK"
   done
 }
@@ -217,8 +213,7 @@ inject_cookies_interactive() {
   
   echo ""
   say "=== NHẬP COOKIE HÀNG LOẠT ==="
-  say "Dán danh sách cookie vào (kể cả bị xuống dòng do dài)."
-  say "Dán xong, ấn Enter 2 lần (tạo 1 dòng trống) để bắt đầu chạy."
+  say "Dán danh sách cookie vào. Dán xong, ấn Enter 2 lần để chạy."
   echo
   
   while IFS= read -r line || [ -n "$line" ]; do
@@ -244,7 +239,7 @@ inject_cookies_interactive() {
       COOKIES+=("$c")
       say "Đã nhận cookie thứ ${#COOKIES[@]}"
     else
-      warn "Bỏ qua đoạn code rác (dài ${#c} ký tự)."
+      warn "Bỏ qua đoạn code rác."
     fi
   done <<< "$raw_input"
   
@@ -302,10 +297,9 @@ inject_cookies_interactive() {
 }
 
 main() {
-  mkdir -p "$WORK"
+  mkdir -p "$WORK" "$TMP_ROOT"
   : > "$LOG"
 
-  # Kích hoạt Wake Lock để Termux không bị kill khi app nổi chạy
   termux-wake-lock 2>/dev/null
   trap 'termux-wake-unlock 2>/dev/null' EXIT
 
@@ -324,20 +318,14 @@ main() {
   fi
   say "Đã có root."
 
-  # Tự động đổi mirror sang China (Tsinghua) chống lỗi sync
-  say "Cấu hình mirror Termux sang Tsinghua (Trung Quốc)..."
-  echo "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
-  rm -rf $PREFIX/var/lib/apt/lists/*
-
-  say "Đang cập nhật Termux và cài gói: $PACKAGES..."
+  say "Đang cập nhật Termux và cài gói: $PACKAGES (Bỏ qua upgrade)..."
   export DEBIAN_FRONTEND=noninteractive
   pkg update -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 || warn "pkg update lỗi"
-  pkg upgrade -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 || warn "pkg upgrade lỗi"
+  # Đã bỏ pkg upgrade để chạy nhanh hơn
   pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES </dev/null >>"$LOG" 2>&1 || warn "Có gói cài lỗi"
-  pkg install -y aapt </dev/null >>"$LOG" 2>&1 || true
 
   if ! curl --version >/dev/null 2>&1; then
-    err "curl bị hỏng. Chạy: pkg update -y && pkg upgrade -y rồi thử lại."
+    err "curl bị hỏng."
     return 1
   fi
 
@@ -374,19 +362,41 @@ main() {
   OK_LIST=(); FAIL_LIST=(); STOPPED_AT=""; PKG_MAP=()
   declare -A DB_MAP=()
   
+  # TẢI SONG SONG
   echo
+  say "Đang tải song song $COUNT file APK..."
   for ((i=1; i<=COUNT; i++)); do
     f="$WORK/$i.apk"; url="$BASE_URL/$i.apk"
-    printf "[%s/%s] Tải %s.apk ... " "$i" "$COUNT" "$i"
-    code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$f" -w '%{http_code}' "$url" </dev/null)
+    (
+      code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$f" -w '%{http_code}' "$url" </dev/null)
+      echo "$code" > "$WORK/$i.code"
+    ) &
+  done
+  wait
+  say "Đã tải xong toàn bộ. Bắt đầu cài đặt tuần tự..."
+
+  # CÀI ĐẶT TUẦN TỰ
+  echo
+  for ((i=1; i<=COUNT; i++)); do
+    f="$WORK/$i.apk"
+    code=$(cat "$WORK/$i.code" 2>/dev/null)
+    printf "[%s/%s] Cài %s.apk ... " "$i" "$COUNT" "$i"
 
     if [ "$code" = "404" ]; then
-      rm -f "$f"; echo "không có file"; STOPPED_AT="$i"; break
+      rm -f "$f"
+      echo "không có file"
+      if [ "$i" = "1" ]; then
+        warn "Không thấy 1.apk: kiểm tra lại GH_USER / GH_REPO / GH_TAG và repo phải để Public."
+      fi
+      STOPPED_AT="$i"
+      break
     elif [ "$code" != "200" ] || [ ! -s "$f" ]; then
-      rm -f "$f"; echo "lỗi tải (HTTP $code)"; FAIL_LIST+=("$i (tải lỗi)"); continue
+      rm -f "$f"
+      echo "lỗi tải (HTTP $code)"
+      FAIL_LIST+=("$i (tải lỗi)")
+      continue
     fi
 
-    printf "xong, đang cài ... "
     before=$(rsu "pm list packages" | tr -d '\r' | sort)
     if install_apk "$f" "$i"; then
       after=$(rsu "pm list packages" | tr -d '\r' | sort)
