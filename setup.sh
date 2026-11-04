@@ -107,6 +107,19 @@ con.close()
 PY
 }
 
+# Check xem cookie còn sống hay không (HTTP 200 là sống)
+check_cookie_alive() {
+  local ck="$1"
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" -H "Cookie: .ROBLOSECURITY=$ck" -H "User-Agent: Mozilla/5.0" --connect-timeout 10 "https://users.roblox.com/v1/users/authenticated")
+  if [ "$code" = "200" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Tự động mở app dưới nền và dùng lệnh find để quét chuẩn xác vị trí file Cookies
 init_apps_data() {
   local i pkg db wait_time act
   echo ""
@@ -121,17 +134,18 @@ init_apps_data() {
       continue
     fi
     
-    printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 30s) ... " "$i"
+    printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
     
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
+    # Bỏ -W để không block script
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
-      rsu "am start -W -n '$act'" >/dev/null 2>&1
+      rsu "am start -n '$act'" >/dev/null 2>&1
     else
       rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
     fi
     
     wait_time=0
-    while [ $wait_time -lt 30 ]; do
+    while [ $wait_time -lt 15 ]; do
       db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
       if [ -n "$db" ]; then break; fi
       sleep 1
@@ -150,7 +164,8 @@ init_apps_data() {
   done
 }
 
-inject_cookie() {
+# Chỉ ghi file DB, KHÔNG bật app lúc này để tránh app nổi đè Termux
+inject_cookie_db() {
   local pkg="$1" cookie="$2" i="$3"
   local dir="/data/data/$pkg" db="${DB_MAP[$i]:-}"
   local tmp="$WORK/cookies_$i.db" res uid gid
@@ -165,6 +180,7 @@ inject_cookie() {
   fi
   
   rsu "am force-stop $pkg" >/dev/null
+  sleep 1
   rm -f "$tmp"
   rsu "cp '$db' '$tmp' && chown $(id -u):$(id -g) '$tmp' && chmod 600 '$tmp'" >>"$LOG"
   res=$(python "$WORK/inject_cookie.py" "$tmp" "$cookie" </dev/null 2>>"$LOG")
@@ -181,9 +197,27 @@ inject_cookie() {
   rsu "chown $uid:$gid '$db' && chmod 600 '$db'" >>"$LOG"
   rsu "restorecon '$db'" >/dev/null
   rm -f "$tmp"
-  
-  rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null
   return 0
+}
+
+# Hàm bật lại app sau khi đã ghi xong hết, bật từng cái một
+open_apps_final() {
+  local i pkg act
+  echo ""
+  say "=== BẬT LẠI CÁC APP ĐỂ LOAD COOKIE ==="
+  for i in "${OK_LIST[@]}"; do
+    pkg="${PKG_MAP[$i]:-}"
+    [ -z "$pkg" ] && continue
+    printf "[Clone %s] Bật app ... " "$i"
+    act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
+    if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
+      rsu "am start -n '$act'" >/dev/null 2>&1
+    else
+      rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
+    fi
+    sleep 2
+    echo "OK"
+  done
 }
 
 inject_cookies_interactive() {
@@ -229,23 +263,44 @@ inject_cookies_interactive() {
     return
   fi
   
+  # 1. CHECK SỐNG CHẾT
+  echo ""
+  say "=== CHECK SỐNG/CHẾT CỦA COOKIE ==="
+  local valid_cookies=()
+  for ck in "${COOKIES[@]}"; do
+    printf "Check cookie ... "
+    if check_cookie_alive "$ck"; then
+      echo "SỐNG"
+      valid_cookies+=("$ck")
+    else
+      echo "CHẾT (Bỏ qua)"
+    fi
+  done
+  
+  if [ ${#valid_cookies[@]} -eq 0 ]; then
+    err "Toàn bộ cookie đều chết. Dừng lại."
+    LOGIN_MSG="Login Roblox: Toàn bộ cookie chết."
+    return
+  fi
+  
+  # 2. GHI DB
   say "Bắt đầu ghi cookie vào các clone..."
   echo
   
   local count_ok=0 count_fail=0
   for i in "${OK_LIST[@]}"; do
-    if [ "$idx" -ge "${#COOKIES[@]}" ]; then
-      warn "Đã hết cookie để gán cho clone $i."
+    if [ "$idx" -ge "${#valid_cookies[@]}" ]; then
+      warn "Đã hết cookie sống để gán cho clone $i."
       count_fail=$((count_fail+1))
       continue
     fi
     
     pkg="${PKG_MAP[$i]:-}"
-    ck="${COOKIES[$idx]}"
+    ck="${valid_cookies[$idx]}"
     idx=$((idx+1))
     
     printf "[Clone %s - %s] Đang ghi cookie ... " "$i" "$pkg"
-    inject_cookie "$pkg" "$ck" "$i"; rc=$?
+    inject_cookie_db "$pkg" "$ck" "$i"; rc=$?
     case $rc in
       0) echo "OK"; count_ok=$((count_ok+1)) ;;
       2) echo "Không thấy DB"; count_fail=$((count_fail+1)) ;;
@@ -253,7 +308,10 @@ inject_cookies_interactive() {
     esac
   done
   
-  LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#COOKIES[@]} cookie)."
+  LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#valid_cookies[@]} cookie sống)."
+  
+  # 3. BẬT APP
+  open_apps_final
 }
 
 main() {
