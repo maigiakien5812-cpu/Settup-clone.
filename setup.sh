@@ -30,7 +30,6 @@ err()  { printf "%b[x]%b %s\n" "$RED" "$RST" "$*"; }
 
 rsu() { $SU -c "$1" </dev/null 2>&1; }
 
-# Cài 1 file apk im lặng bằng root
 install_apk() {
   local f="$1" i="$2" out size
   out=$(rsu "mkdir -p '$TMP_ROOT' && cp '$f' '$TMP_ROOT/$i.apk' && chmod 644 '$TMP_ROOT/$i.apk' && pm install -r -g '$TMP_ROOT/$i.apk'")
@@ -108,7 +107,7 @@ con.close()
 PY
 }
 
-# Tự động mở app dưới nền để nó sinh ra file DB WebView (Cookies)
+# Tự động mở app dưới nền và dùng lệnh find để quét chuẩn xác vị trí file Cookies
 init_apps_data() {
   local i pkg db wait_time
   echo ""
@@ -116,43 +115,48 @@ init_apps_data() {
   for i in "${OK_LIST[@]}"; do
     pkg="${PKG_MAP[$i]:-}"
     [ -z "$pkg" ] && continue
-    db="/data/data/$pkg/app_webview/Default/Cookies"
     
-    # Nếu đã có DB rồi thì bỏ qua
-    if rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
+    db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
+    if [ -n "$db" ]; then
+      DB_MAP[$i]="$db"
       continue
     fi
     
     printf "[Clone %s] Đang lấy data ngầm ... " "$i"
     rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
+    sleep 5
     
-    # Chờ tối đa 10s cho đến khi file Cookies xuất hiện
     wait_time=0
-    while [ $wait_time -lt 10 ]; do
+    while [ $wait_time -lt 15 ]; do
+      db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
+      if [ -n "$db" ]; then break; fi
       sleep 1
       wait_time=$((wait_time+1))
-      if rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
-        break
-      fi
     done
     
     rsu "am force-stop $pkg" >/dev/null 2>&1
     sleep 1
-    if rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
+    
+    if [ -n "$db" ]; then
+      DB_MAP[$i]="$db"
       echo "OK"
     else
-      echo "Cảnh báo (không tạo được file)"
+      echo "Cảnh báo (Không tạo được file)"
     fi
   done
 }
 
 inject_cookie() {
   local pkg="$1" cookie="$2" i="$3"
-  local dir="/data/data/$pkg" db="/data/data/$pkg/app_webview/Default/Cookies"
+  local dir="/data/data/$pkg" db="${DB_MAP[$i]:-}"
   local tmp="$WORK/cookies_$i.db" res uid gid
   
-  if ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
-    echo "[login $i] không thấy $db" >>"$LOG"
+  if [ -z "$db" ] || ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
+    db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
+  fi
+
+  if [ -z "$db" ] || ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
+    echo "[login $i] không thấy file Cookies của $pkg" >>"$LOG"
     return 2
   fi
   
@@ -178,37 +182,39 @@ inject_cookie() {
   return 0
 }
 
-# Nhập danh sách cookie 1 lần, tự động map vào từng clone
 inject_cookies_interactive() {
-  local line c count=0 idx=0
+  local line c count=0 idx=0 raw_input=""
   local COOKIES=()
   
   echo ""
   say "=== NHẬP COOKIE HÀNG LOẠT ==="
-  say "Dán danh sách cookie vào, MỖI DÒNG 1 COOKIE (Dòng 1 -> Clone 1, Dòng 2 -> Clone 2...)."
-  say "Dán xong thì gõ DONE rồi Enter (hoặc ấn Ctrl+D) để chạy tiếp."
+  say "Dán danh sách cookie vào (kể cả bị xuống dòng do dài)."
+  say "Dán xong thì gõ DONE rồi Enter để chạy tiếp."
   echo
   
   while IFS= read -r line || [ -n "$line" ]; do
     line=$(printf '%s' "$line" | tr -d '\r')
     [ "$line" = "DONE" ] && break
+    raw_input+="$line"
+  done </dev/tty
+  
+  raw_input=$(printf '%s' "$raw_input" | sed 's/_|WARNING/\n_|WARNING/g')
+  
+  while IFS= read -r line; do
     [ -z "$line" ] && continue
-    
-    c=$(printf '%s' "$line" | grep -o '_|WARNING.*' | head -1)
-    [ -z "$c" ] && c="$line"
-    c=$(printf '%s' "$c" | tr -cd 'A-Za-z0-9_|.:+/=-')
+    c=$(printf '%s' "$line" | tr -cd 'A-Za-z0-9_|.:+/=-')
     
     if [ "${#c}" -ge 100 ]; then
       COOKIES+=("$c")
-      say "Đã nhận cookie thứ ${#COOKIES[@]}"
+      say "Đã nhận cookie thứ ${#COOKIES[@]} (dài ${#c} ký tự)"
     else
-      warn "Bỏ qua dòng không hợp lệ."
+      warn "Bỏ qua đoạn code rác (dài ${#c} ký tự)."
     fi
-  done </dev/tty
+  done <<< "$raw_input"
   
   if [ ${#COOKIES[@]} -eq 0 ]; then
-    warn "Không có cookie nào được nhập."
-    LOGIN_MSG="Login Roblox: Không nhập cookie."
+    warn "Không có cookie nào hợp lệ."
+    LOGIN_MSG="Login Roblox: Không nhập được cookie."
     return
   fi
   
@@ -301,6 +307,8 @@ main() {
   fi
 
   OK_LIST=(); FAIL_LIST=(); STOPPED_AT=""; PKG_MAP=()
+  declare -A DB_MAP=()
+  
   echo
   for ((i=1; i<=COUNT; i++)); do
     f="$WORK/$i.apk"; url="$BASE_URL/$i.apk"
