@@ -107,9 +107,8 @@ con.close()
 PY
 }
 
-# Tự động mở app dưới nền và dùng lệnh find để quét chuẩn xác vị trí file Cookies
 init_apps_data() {
-  local i pkg db wait_time
+  local i pkg db wait_time act
   echo ""
   say "=== KHỞI TẠO DỮ LIỆU BAN ĐẦU CHO CÁC CLONE ==="
   for i in "${OK_LIST[@]}"; do
@@ -122,12 +121,17 @@ init_apps_data() {
       continue
     fi
     
-    printf "[Clone %s] Đang lấy data ngầm ... " "$i"
-    rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
-    sleep 5
+    printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 30s) ... " "$i"
+    
+    act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
+    if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
+      rsu "am start -W -n '$act'" >/dev/null 2>&1
+    else
+      rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
+    fi
     
     wait_time=0
-    while [ $wait_time -lt 15 ]; do
+    while [ $wait_time -lt 30 ]; do
       db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
       if [ -n "$db" ]; then break; fi
       sleep 1
@@ -141,7 +145,7 @@ init_apps_data() {
       DB_MAP[$i]="$db"
       echo "OK"
     else
-      echo "Cảnh báo (Không tạo được file)"
+      echo "Thất bại (Sẽ thử tìm lại lúc ghi cookie)"
     fi
   done
 }
@@ -183,18 +187,25 @@ inject_cookie() {
 }
 
 inject_cookies_interactive() {
-  local line c count=0 idx=0 raw_input=""
+  local line c count=0 idx=0 raw_input="" empty_count=0
   local COOKIES=()
   
   echo ""
   say "=== NHẬP COOKIE HÀNG LOẠT ==="
   say "Dán danh sách cookie vào (kể cả bị xuống dòng do dài)."
-  say "Dán xong thì gõ DONE rồi Enter để chạy tiếp."
+  say "Dán xong, ấn Enter 2 lần (tạo 1 dòng trống) để bắt đầu chạy."
   echo
   
   while IFS= read -r line || [ -n "$line" ]; do
     line=$(printf '%s' "$line" | tr -d '\r')
-    [ "$line" = "DONE" ] && break
+    
+    if [ -z "$line" ]; then
+      empty_count=$((empty_count+1))
+      if [ "$empty_count" -ge 2 ]; then break; fi
+    else
+      empty_count=0
+    fi
+    
     raw_input+="$line"
   done </dev/tty
   
@@ -206,7 +217,7 @@ inject_cookies_interactive() {
     
     if [ "${#c}" -ge 100 ]; then
       COOKIES+=("$c")
-      say "Đã nhận cookie thứ ${#COOKIES[@]} (dài ${#c} ký tự)"
+      say "Đã nhận cookie thứ ${#COOKIES[@]}"
     else
       warn "Bỏ qua đoạn code rác (dài ${#c} ký tự)."
     fi
