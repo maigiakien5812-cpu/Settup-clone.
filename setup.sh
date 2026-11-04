@@ -1,6 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
 #  SETUP CLONE APK - chạy trong Termux trên UGPhone (có root)
+#  - Tự đổi mirror Termux sang China (Tsinghua) chống lỗi sync
 #  - Cài gói cần thiết cho Termux
 #  - Hỏi số clone, tải 1.apk -> N.apk từ GitHub, cài im lặng bằng root
 #  - Chỉnh độ rộng nhỏ nhất (smallest width) của máy lên 750
@@ -107,19 +108,13 @@ con.close()
 PY
 }
 
-# Check xem cookie còn sống hay không (HTTP 200 là sống)
 check_cookie_alive() {
   local ck="$1"
   local code
   code=$(curl -s -o /dev/null -w "%{http_code}" -H "Cookie: .ROBLOSECURITY=$ck" -H "User-Agent: Mozilla/5.0" --connect-timeout 10 "https://users.roblox.com/v1/users/authenticated")
-  if [ "$code" = "200" ]; then
-    return 0
-  else
-    return 1
-  fi
+  if [ "$code" = "200" ]; then return 0; else return 1; fi
 }
 
-# Tự động mở app dưới nền và dùng lệnh find để quét chuẩn xác vị trí file Cookies
 init_apps_data() {
   local i pkg db wait_time act
   echo ""
@@ -135,9 +130,7 @@ init_apps_data() {
     fi
     
     printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
-    
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
-    # Bỏ -W để không block script
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
     else
@@ -164,7 +157,6 @@ init_apps_data() {
   done
 }
 
-# Chỉ ghi file DB, KHÔNG bật app lúc này để tránh app nổi đè Termux
 inject_cookie_db() {
   local pkg="$1" cookie="$2" i="$3"
   local dir="/data/data/$pkg" db="${DB_MAP[$i]:-}"
@@ -200,7 +192,6 @@ inject_cookie_db() {
   return 0
 }
 
-# Hàm bật lại app sau khi đã ghi xong hết, bật từng cái một
 open_apps_final() {
   local i pkg act
   echo ""
@@ -263,7 +254,6 @@ inject_cookies_interactive() {
     return
   fi
   
-  # 1. CHECK SỐNG CHẾT
   echo ""
   say "=== CHECK SỐNG/CHẾT CỦA COOKIE ==="
   local valid_cookies=()
@@ -283,7 +273,6 @@ inject_cookies_interactive() {
     return
   fi
   
-  # 2. GHI DB
   say "Bắt đầu ghi cookie vào các clone..."
   echo
   
@@ -309,14 +298,16 @@ inject_cookies_interactive() {
   done
   
   LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#valid_cookies[@]} cookie sống)."
-  
-  # 3. BẬT APP
   open_apps_final
 }
 
 main() {
   mkdir -p "$WORK"
   : > "$LOG"
+
+  # Kích hoạt Wake Lock để Termux không bị kill khi app nổi chạy
+  termux-wake-lock 2>/dev/null
+  trap 'termux-wake-unlock 2>/dev/null' EXIT
 
   if [ "$GH_USER" = "TEN_GITHUB" ] || [ "$GH_REPO" = "TEN_REPO" ]; then
     err "Chưa sửa GH_USER / GH_REPO ở đầu file setup.sh."
@@ -332,6 +323,11 @@ main() {
     return 1
   fi
   say "Đã có root."
+
+  # Tự động đổi mirror sang China (Tsinghua) chống lỗi sync
+  say "Cấu hình mirror Termux sang Tsinghua (Trung Quốc)..."
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
+  rm -rf $PREFIX/var/lib/apt/lists/*
 
   say "Đang cập nhật Termux và cài gói: $PACKAGES..."
   export DEBIAN_FRONTEND=noninteractive
