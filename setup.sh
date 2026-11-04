@@ -2,8 +2,8 @@
 # ============================================================
 #  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG
 #  - Tải song song đa luồng, bỏ pkg upgrade
-#  - Check sống/chết cookie trước khi ghi
-#  - Tự dò file DB, tự bật app sau khi xong
+#  - Chỉnh độ rộng lên đầu
+#  - Ép xoay dọc khi lấy data, không bật app ở cuối
 # ============================================================
 
 # ---------- CHỈ SỬA 3 DÒNG NÀY ----------
@@ -117,6 +117,15 @@ init_apps_data() {
   local i pkg db wait_time act
   echo ""
   say "=== KHỞI TẠO DỮ LIỆU BAN ĐẦU CHO CÁC CLONE ==="
+  
+  # Lưu lại cài đặt xoay màn hình cũ
+  OLD_ROT=$(rsu "settings get system user_rotation")
+  OLD_ACCEL=$(rsu "settings get system accelerometer_rotation")
+
+  # Ép cố định màn hình dọc
+  rsu "settings put system accelerometer_rotation 0"
+  rsu "settings put system user_rotation 0"
+
   for i in "${OK_LIST[@]}"; do
     pkg="${PKG_MAP[$i]:-}"
     [ -z "$pkg" ] && continue
@@ -129,6 +138,8 @@ init_apps_data() {
     
     printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
+    
+    # Dùng am start không có -W để không block Termux
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
     else
@@ -143,6 +154,7 @@ init_apps_data() {
       wait_time=$((wait_time+1))
     done
     
+    # Đóng app ngay lập tức
     rsu "am force-stop $pkg" >/dev/null 2>&1
     sleep 1
     
@@ -153,6 +165,10 @@ init_apps_data() {
       echo "Thất bại (Sẽ thử lại lúc ghi)"
     fi
   done
+
+  # Phục hồi lại cài đặt xoay màn hình
+  rsu "settings put system user_rotation $OLD_ROT"
+  rsu "settings put system accelerometer_rotation $OLD_ACCEL"
 }
 
 inject_cookie_db() {
@@ -187,25 +203,6 @@ inject_cookie_db() {
   rsu "restorecon '$db'" >/dev/null
   rm -f "$tmp"
   return 0
-}
-
-open_apps_final() {
-  local i pkg act
-  echo ""
-  say "=== BẬT LẠI CÁC APP ĐỂ LOAD COOKIE ==="
-  for i in "${OK_LIST[@]}"; do
-    pkg="${PKG_MAP[$i]:-}"
-    [ -z "$pkg" ] && continue
-    printf "[Clone %s] Bật app ... " "$i"
-    act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
-    if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
-      rsu "am start -n '$act'" >/dev/null 2>&1
-    else
-      rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
-    fi
-    sleep 1
-    echo "OK"
-  done
 }
 
 inject_cookies_interactive() {
@@ -294,7 +291,7 @@ inject_cookies_interactive() {
   done
   
   LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#valid_cookies[@]} cookie sống)."
-  open_apps_final
+  # Đã bỏ hoàn toàn hàm open_apps_final ở đây
 }
 
 main() {
@@ -319,6 +316,25 @@ main() {
     return 1
   fi
   say "Đã có root."
+
+  # ---------- CHUYỂN PHẦN CHỈNH ĐỘ RỘNG LÊN ĐẦU ----------
+  echo
+  DENSITY_MSG=""
+  SIZE=$(rsu "wm size" | grep -i 'physical' | grep -oE '[0-9]+x[0-9]+' | head -1)
+  [ -z "$SIZE" ] && SIZE=$(rsu "wm size" | grep -oE '[0-9]+x[0-9]+' | head -1)
+  if [ -n "$SIZE" ]; then
+    W=${SIZE%x*}; H=${SIZE#*x}
+    SMALL=$(( W < H ? W : H ))
+    DPI=$(( SMALL * 160 / TARGET_SW ))
+    rsu "wm density $DPI" >/dev/null
+    NOW_SW=$(( SMALL * 160 / DPI ))
+    DENSITY_MSG="Màn hình ${SIZE}, density ${DPI} => smallest width ≈ ${NOW_SW}dp"
+    say "Đã chỉnh độ rộng: $DENSITY_MSG"
+  else
+    DENSITY_MSG="Không đọc được kích thước màn hình."
+    warn "$DENSITY_MSG"
+  fi
+  # ------------------------------------------------
 
   # Tự động đổi mirror sang China (Tsinghua) chống lỗi sync
   say "Cấu hình mirror Termux sang Tsinghua..."
@@ -429,21 +445,6 @@ main() {
     inject_cookies_interactive
   fi
 
-  echo
-  DENSITY_MSG=""
-  SIZE=$(rsu "wm size" | grep -i 'physical' | grep -oE '[0-9]+x[0-9]+' | head -1)
-  [ -z "$SIZE" ] && SIZE=$(rsu "wm size" | grep -oE '[0-9]+x[0-9]+' | head -1)
-  if [ -n "$SIZE" ]; then
-    W=${SIZE%x*}; H=${SIZE#*x}
-    SMALL=$(( W < H ? W : H ))
-    DPI=$(( SMALL * 160 / TARGET_SW ))
-    rsu "wm density $DPI" >/dev/null
-    NOW_SW=$(( SMALL * 160 / DPI ))
-    DENSITY_MSG="Màn hình ${SIZE}, density ${DPI} => smallest width ≈ ${NOW_SW}dp"
-  else
-    DENSITY_MSG="Không đọc được kích thước màn hình."
-  fi
-
   printf '\a'
   echo "=================================================="
   say "XONG!"
@@ -452,7 +453,6 @@ main() {
   echo "  $QB_MSG"
   echo "  $DELTA_MSG"
   echo "  $LOGIN_MSG"
-  echo "  $DENSITY_MSG"
   echo "=================================================="
 }
 
