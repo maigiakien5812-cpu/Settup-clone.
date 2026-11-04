@@ -1,8 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
-#  SETUP CLONE APK - TỐI ƯU TỐC ĐỘ
-#  - Tải song song đa luồng
-#  - Bỏ qua pkg upgrade để chạy nhanh
+#  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG
+#  - Tải song song đa luồng, bỏ pkg upgrade
+#  - Check sống/chết cookie trước khi ghi
+#  - Tự dò file DB, tự bật app sau khi xong
 # ============================================================
 
 # ---------- CHỈ SỬA 3 DÒNG NÀY ----------
@@ -18,7 +19,7 @@ WORK="$HOME/clone_apks"
 TMP_ROOT="/data/local/tmp/clone_apks"
 LOG="$WORK/setup.log"
 
-BANANA_KEY="ef4d29d899ff8d487914fd0f"
+BANANA_KEY=""
 CONFIG_NAME="config kaitun banana.txt"
 
 GRN='\033[1;32m'; YLW='\033[1;33m'; RED='\033[1;31m'; RST='\033[0m'
@@ -126,7 +127,7 @@ init_apps_data() {
       continue
     fi
     
-    printf "[Clone %s] Đang lấy data ngầm ... " "$i"
+    printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
@@ -149,7 +150,7 @@ init_apps_data() {
       DB_MAP[$i]="$db"
       echo "OK"
     else
-      echo "Thất bại"
+      echo "Thất bại (Sẽ thử lại lúc ghi)"
     fi
   done
 }
@@ -191,7 +192,7 @@ inject_cookie_db() {
 open_apps_final() {
   local i pkg act
   echo ""
-  say "=== BẬT LẠI CÁC APP ==="
+  say "=== BẬT LẠI CÁC APP ĐỂ LOAD COOKIE ==="
   for i in "${OK_LIST[@]}"; do
     pkg="${PKG_MAP[$i]:-}"
     [ -z "$pkg" ] && continue
@@ -239,7 +240,7 @@ inject_cookies_interactive() {
       COOKIES+=("$c")
       say "Đã nhận cookie thứ ${#COOKIES[@]}"
     else
-      warn "Bỏ qua đoạn code rác."
+      warn "Bỏ qua đoạn code rác (dài ${#c} ký tự)."
     fi
   done <<< "$raw_input"
   
@@ -300,6 +301,7 @@ main() {
   mkdir -p "$WORK" "$TMP_ROOT"
   : > "$LOG"
 
+  # Kích hoạt Wake Lock chống văng Termux
   termux-wake-lock 2>/dev/null
   trap 'termux-wake-unlock 2>/dev/null' EXIT
 
@@ -318,10 +320,14 @@ main() {
   fi
   say "Đã có root."
 
+  # Tự động đổi mirror sang China (Tsinghua) chống lỗi sync
+  say "Cấu hình mirror Termux sang Tsinghua..."
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
+  rm -rf $PREFIX/var/lib/apt/lists/*
+
   say "Đang cập nhật Termux và cài gói: $PACKAGES (Bỏ qua upgrade)..."
   export DEBIAN_FRONTEND=noninteractive
   pkg update -y -o Dpkg::Options::="--force-confold" </dev/null >>"$LOG" 2>&1 || warn "pkg update lỗi"
-  # Đã bỏ pkg upgrade để chạy nhanh hơn
   pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES </dev/null >>"$LOG" 2>&1 || warn "Có gói cài lỗi"
 
   if ! curl --version >/dev/null 2>&1; then
