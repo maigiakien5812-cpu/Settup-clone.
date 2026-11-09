@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
 #  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG
-#  - Tải APK từ GitHub Release (kết hợp với sync_apk.sh)
 #  - Tự ấn Y khi tải gói, bỏ pkg upgrade
 #  - Chỉnh độ rộng lên đầu
 #  - Ép xoay dọc khi lấy data, tự phục hồi
@@ -119,7 +118,7 @@ init_apps_data() {
   local i pkg db wait_time act
   echo ""
   say "=== KHỞI TẠO DỮ LIỆU BAN ĐẦU CHO CÁC CLONE ==="
-
+  
   # Lưu lại trạng thái xoay màn hình cũ
   OLD_ROT=$(rsu "settings get system user_rotation" | tr -d '\r\n')
   OLD_ACCEL=$(rsu "settings get system accelerometer_rotation" | tr -d '\r\n')
@@ -133,22 +132,22 @@ init_apps_data() {
   for i in "${OK_LIST[@]}"; do
     pkg="${PKG_MAP[$i]:-}"
     [ -z "$pkg" ] && continue
-
+    
     db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
     if [ -n "$db" ]; then
       DB_MAP[$i]="$db"
       continue
     fi
-
+    
     printf "[Clone %s] Đang lấy data ngầm (chờ tối đa 15s) ... " "$i"
     act=$(rsu "cmd package resolve-activity --brief $pkg | tail -n 1")
-
+    
     if [ -n "$act" ] && [[ "$act" == *"/"* ]]; then
       rsu "am start -n '$act'" >/dev/null 2>&1
     else
       rsu "monkey -p $pkg -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1
     fi
-
+    
     wait_time=0
     while [ $wait_time -lt 15 ]; do
       db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
@@ -156,11 +155,11 @@ init_apps_data() {
       sleep 1
       wait_time=$((wait_time+1))
     done
-
+    
     # Đóng app ngay lập tức sau khi lấy xong data
     rsu "am force-stop $pkg" >/dev/null 2>&1
     sleep 1
-
+    
     if [ -n "$db" ]; then
       DB_MAP[$i]="$db"
       echo "OK"
@@ -178,7 +177,7 @@ inject_cookie_db() {
   local pkg="$1" cookie="$2" i="$3"
   local dir="/data/data/$pkg" db="${DB_MAP[$i]:-}"
   local tmp="$WORK/cookies_$i.db" res uid gid
-
+  
   if [ -z "$db" ] || ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
     db=$(rsu "find /data/data/$pkg -type f -name 'Cookies' 2>/dev/null" | head -1)
   fi
@@ -186,20 +185,20 @@ inject_cookie_db() {
   if [ -z "$db" ] || ! rsu "[ -f '$db' ] && echo yes" | grep -q yes; then
     return 2
   fi
-
+  
   rsu "am force-stop $pkg" >/dev/null
   sleep 1
   rm -f "$tmp"
   rsu "cp '$db' '$tmp' && chown $(id -u):$(id -g) '$tmp' && chmod 600 '$tmp'" >>"$LOG"
   res=$(python "$WORK/inject_cookie.py" "$tmp" "$cookie" </dev/null 2>>"$LOG")
-
+  
   if [ "$res" != "OK" ]; then rm -f "$tmp"; return 1; fi
-
+  
   uid=$(rsu "stat -c %u '$dir'" | grep -oE '[0-9]+' | head -1)
   gid=$(rsu "stat -c %g '$dir'" | grep -oE '[0-9]+' | head -1)
   [ -z "$uid" ] && uid="10000"
   [ -z "$gid" ] && gid="10000"
-
+  
   rsu "rm -f '$db' '$db-journal' '$db-wal' '$db-shm'" >>"$LOG"
   rsu "cp '$tmp' '$db'" >>"$LOG"
   rsu "chown $uid:$gid '$db' && chmod 600 '$db'" >>"$LOG"
@@ -211,31 +210,31 @@ inject_cookie_db() {
 inject_cookies_interactive() {
   local line c count=0 idx=0 raw_input="" empty_count=0
   local COOKIES=()
-
+  
   echo ""
   say "=== NHẬP COOKIE HÀNG LOẠT ==="
   say "Dán danh sách cookie vào. Dán xong, ấn Enter 2 lần để chạy."
   echo
-
+  
   while IFS= read -r line || [ -n "$line" ]; do
     line=$(printf '%s' "$line" | tr -d '\r')
-
+    
     if [ -z "$line" ]; then
       empty_count=$((empty_count+1))
       if [ "$empty_count" -ge 2 ]; then break; fi
     else
       empty_count=0
     fi
-
+    
     raw_input+="$line"
   done </dev/tty
-
+  
   raw_input=$(printf '%s' "$raw_input" | sed 's/_|WARNING/\n_|WARNING/g')
-
+  
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     c=$(printf '%s' "$line" | tr -cd 'A-Za-z0-9_|.:+/=-')
-
+    
     if [ "${#c}" -ge 100 ]; then
       COOKIES+=("$c")
       say "Đã nhận cookie thứ ${#COOKIES[@]}"
@@ -243,13 +242,13 @@ inject_cookies_interactive() {
       warn "Bỏ qua đoạn code rác (dài ${#c} ký tự)."
     fi
   done <<< "$raw_input"
-
+  
   if [ ${#COOKIES[@]} -eq 0 ]; then
     warn "Không có cookie nào hợp lệ."
     LOGIN_MSG="Login Roblox: Không nhập được cookie."
     return
   fi
-
+  
   echo ""
   say "=== CHECK SỐNG/CHẾT CỦA COOKIE ==="
   local valid_cookies=()
@@ -262,16 +261,16 @@ inject_cookies_interactive() {
       echo "CHẾT (Bỏ qua)"
     fi
   done
-
+  
   if [ ${#valid_cookies[@]} -eq 0 ]; then
     err "Toàn bộ cookie đều chết. Dừng lại."
     LOGIN_MSG="Login Roblox: Toàn bộ cookie chết."
     return
   fi
-
+  
   say "Bắt đầu ghi cookie vào các clone..."
   echo
-
+  
   local count_ok=0 count_fail=0
   for i in "${OK_LIST[@]}"; do
     if [ "$idx" -ge "${#valid_cookies[@]}" ]; then
@@ -279,32 +278,20 @@ inject_cookies_interactive() {
       count_fail=$((count_fail+1))
       continue
     fi
-
+    
     pkg="${PKG_MAP[$i]:-}"
     ck="${valid_cookies[$idx]}"
-
+    idx=$((idx+1))
+    
     printf "[Clone %s - %s] Đang ghi cookie ... " "$i" "$pkg"
     inject_cookie_db "$pkg" "$ck" "$i"; rc=$?
-    
     case $rc in
-      0) 
-        echo "OK"
-        count_ok=$((count_ok+1))
-        idx=$((idx+1)) # Chỉ tăng idx khi ghi thành công, tránh đốt cookie
-        ;;
-      2) 
-        echo "Không thấy DB"
-        count_fail=$((count_fail+1)) 
-        # Không tăng idx, giữ cookie này cho clone tiếp theo
-        ;;
-      *) 
-        echo "Lỗi ghi"
-        count_fail=$((count_fail+1))
-        idx=$((idx+1)) # Lỗi ghi thì bỏ cookie này luôn
-        ;;
+      0) echo "OK"; count_ok=$((count_ok+1)) ;;
+      2) echo "Không thấy DB"; count_fail=$((count_fail+1)) ;;
+      *) echo "Lỗi ghi"; count_fail=$((count_fail+1)) ;;
     esac
   done
-
+  
   LOGIN_MSG="Login Roblox: Đã ghi thành công $count_ok/${#OK_LIST[@]} clone (nhận ${#valid_cookies[@]} cookie sống)."
 }
 
