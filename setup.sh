@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ============================================================
-#  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG (GOFILE)
-#  - Tải APK từ GoFile (link + mật khẩu, không cần GitHub)
+#  SETUP CLONE APK - BẢN TỐI ƯU TỐC ĐỘ & TỰ ĐỘNG
+#  - Tải APK từ GitHub Release (kết hợp với sync_apk.sh)
 #  - Tự ấn Y khi tải gói, bỏ pkg upgrade
 #  - Chỉnh độ rộng lên đầu
 #  - Ép xoay dọc khi lấy data, tự phục hồi
@@ -9,13 +9,14 @@
 # ============================================================
 
 # ---------- CHỈ SỬA 3 DÒNG NÀY ----------
-GOFILE_URL="https://gofile.io/d/oxMewUbf"   # link GoFile (folder hoặc file)
-GOFILE_PASSWORD="taphoacloudchamvn"         # mật khẩu (để "" nếu không có)
-GOFILE_WT="4fd6sg89d7s6"                    # website token GoFile (đổi nếu bị lỗi notPremium)
+GH_USER="maigiakien5812-cpu"   # tên tài khoản GitHub
+GH_REPO="Settup-clone."        # tên repo chứa file APK (có dấu chấm cuối)
+GH_TAG="apk"                   # tên tag của Release chứa 1.apk, 2.apk, ...
 # ----------------------------------------
 
 TARGET_SW=750
-PACKAGES="curl wget git python nano tsu aapt jq"
+PACKAGES="curl wget git python nano tsu aapt"
+BASE_URL="https://github.com/${GH_USER}/${GH_REPO}/releases/download/${GH_TAG}"
 WORK="$HOME/clone_apks"
 TMP_ROOT="/data/local/tmp/clone_apks"
 LOG="$WORK/setup.log"
@@ -29,57 +30,6 @@ warn() { printf "%b[!]%b %s\n" "$YLW" "$RST" "$*"; }
 err()  { printf "%b[x]%b %s\n" "$RED" "$RST" "$*"; }
 
 rsu() { $SU -c "$1" </dev/null 2>&1; }
-
-# ================= GOFILE HELPERS =================
-gofile_extract_content_id() {
-  sed -E 's|.*gofile\.io/d/([^/?#]+).*|\1|' <<< "$1" | head -1
-}
-
-gofile_get_account_token() {
-  curl -s --connect-timeout 15 -X POST 'https://api.gofile.io/accounts' \
-    -H 'User-Agent: Mozilla/5.0' </dev/null \
-    | jq -r '.data.token // empty'
-}
-
-gofile_get_contents() {
-  local content_id="$1" password="$2" token="$3"
-  local url="https://api.gofile.io/contents/${content_id}?cache=true"
-  [ -n "$GOFILE_WT" ] && url="https://api.gofile.io/contents/${content_id}?wt=${GOFILE_WT}&cache=true"
-  if [ -n "$password" ]; then
-    local pw_hash
-    pw_hash=$(printf '%s' "$password" | sha256sum | awk '{print $1}')
-    url="${url}&password=${pw_hash}"
-  fi
-  curl -s --connect-timeout 15 -H "Authorization: Bearer $token" \
-    -H 'User-Agent: Mozilla/5.0' "$url" </dev/null
-}
-
-gofile_get_file_link() {
-  local content_id="$1" password="$2" filename="$3" token="$4"
-  local resp status link
-  resp=$(gofile_get_contents "$content_id" "$password" "$token")
-  status=$(jq -r '.status // empty' <<< "$resp" 2>/dev/null)
-  if [ "$status" != "ok" ]; then
-    echo ""
-    return 1
-  fi
-  # Folder: children[]
-  link=$(jq -r --arg fn "$filename" \
-    '.data.children[]? | select(.name == $fn) | .link // empty' \
-    <<< "$resp" 2>/dev/null | head -1)
-  # Fallback: single file (data chính là file)
-  if [ -z "$link" ] || [ "$link" = "null" ]; then
-    link=$(jq -r --arg fn "$filename" \
-      '.data | select(.name == $fn) | .link // empty' \
-      <<< "$resp" 2>/dev/null | head -1)
-  fi
-  if [ -z "$link" ] || [ "$link" = "null" ]; then
-    echo ""
-    return 1
-  fi
-  echo "$link"
-}
-# ==================================================
 
 install_apk() {
   local f="$1" i="$2" out size
@@ -170,11 +120,13 @@ init_apps_data() {
   echo ""
   say "=== KHỞI TẠO DỮ LIỆU BAN ĐẦU CHO CÁC CLONE ==="
 
+  # Lưu lại trạng thái xoay màn hình cũ
   OLD_ROT=$(rsu "settings get system user_rotation" | tr -d '\r\n')
   OLD_ACCEL=$(rsu "settings get system accelerometer_rotation" | tr -d '\r\n')
   [ -z "$OLD_ROT" ] || [ "$OLD_ROT" = "null" ] && OLD_ROT="0"
   [ -z "$OLD_ACCEL" ] || [ "$OLD_ACCEL" = "null" ] && OLD_ACCEL="1"
 
+  # Ép cố định màn hình dọc trong lúc lấy data
   rsu "settings put system accelerometer_rotation 0"
   rsu "settings put system user_rotation 0"
 
@@ -205,6 +157,7 @@ init_apps_data() {
       wait_time=$((wait_time+1))
     done
 
+    # Đóng app ngay lập tức sau khi lấy xong data
     rsu "am force-stop $pkg" >/dev/null 2>&1
     sleep 1
 
@@ -216,6 +169,7 @@ init_apps_data() {
     fi
   done
 
+  # Phục hồi lại cài đặt xoay màn hình ban đầu
   rsu "settings put system user_rotation $OLD_ROT"
   rsu "settings put system accelerometer_rotation $OLD_ACCEL"
 }
@@ -328,14 +282,26 @@ inject_cookies_interactive() {
 
     pkg="${PKG_MAP[$i]:-}"
     ck="${valid_cookies[$idx]}"
-    idx=$((idx+1))
 
     printf "[Clone %s - %s] Đang ghi cookie ... " "$i" "$pkg"
     inject_cookie_db "$pkg" "$ck" "$i"; rc=$?
+    
     case $rc in
-      0) echo "OK"; count_ok=$((count_ok+1)) ;;
-      2) echo "Không thấy DB"; count_fail=$((count_fail+1)) ;;
-      *) echo "Lỗi ghi"; count_fail=$((count_fail+1)) ;;
+      0) 
+        echo "OK"
+        count_ok=$((count_ok+1))
+        idx=$((idx+1)) # Chỉ tăng idx khi ghi thành công, tránh đốt cookie
+        ;;
+      2) 
+        echo "Không thấy DB"
+        count_fail=$((count_fail+1)) 
+        # Không tăng idx, giữ cookie này cho clone tiếp theo
+        ;;
+      *) 
+        echo "Lỗi ghi"
+        count_fail=$((count_fail+1))
+        idx=$((idx+1)) # Lỗi ghi thì bỏ cookie này luôn
+        ;;
     esac
   done
 
@@ -346,13 +312,12 @@ main() {
   mkdir -p "$WORK" "$TMP_ROOT"
   : > "$LOG"
 
+  # Kích hoạt Wake Lock chống văng Termux
   termux-wake-lock 2>/dev/null
   trap 'termux-wake-unlock 2>/dev/null' EXIT
 
-  # ---------- VALIDATE GOFILE ----------
-  CONTENT_ID=$(gofile_extract_content_id "$GOFILE_URL")
-  if [ -z "$CONTENT_ID" ]; then
-    err "Link GoFile không hợp lệ: $GOFILE_URL"
+  if [ "$GH_USER" = "TEN_GITHUB" ] || [ "$GH_REPO" = "TEN_REPO" ]; then
+    err "Chưa sửa GH_USER / GH_REPO ở đầu file setup.sh."
     return 1
   fi
 
@@ -366,7 +331,7 @@ main() {
   fi
   say "Đã có root."
 
-  # ---------- CHỈNH ĐỘ RỘNG ----------
+  # ---------- CHUYỂN PHẦN CHỈNH ĐỘ RỘNG LÊN ĐẦU ----------
   echo
   DENSITY_MSG=""
   SIZE=$(rsu "wm size" | grep -i 'physical' | grep -oE '[0-9]+x[0-9]+' | head -1)
@@ -383,14 +348,17 @@ main() {
     DENSITY_MSG="Không đọc được kích thước màn hình."
     warn "$DENSITY_MSG"
   fi
+  # ------------------------------------------------
 
-  # ---------- MIRROR + PACKAGES ----------
+  # Tự động đổi mirror sang China (Tsinghua) chống lỗi sync
   say "Cấu hình mirror Termux sang Tsinghua..."
   echo "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
   rm -rf $PREFIX/var/lib/apt/lists/*
 
   say "Đang cập nhật Termux và cài gói: $PACKAGES..."
   export DEBIAN_FRONTEND=noninteractive
+  
+  # Dùng yes | để tự động trả lời Y cho mọi câu hỏi
   yes | pkg update -y -o Dpkg::Options::="--force-confold" >>"$LOG" 2>&1 || warn "pkg update lỗi"
   yes | pkg install -y -o Dpkg::Options::="--force-confold" $PACKAGES >>"$LOG" 2>&1 || warn "Có gói cài lỗi"
 
@@ -398,21 +366,7 @@ main() {
     err "curl bị hỏng."
     return 1
   fi
-  if ! command -v jq >/dev/null 2>&1; then
-    err "jq chưa cài được — cần jq để gọi GoFile API."
-    return 1
-  fi
 
-  # ---------- LẤY GOFILE TOKEN ----------
-  say "Đang lấy GoFile account token..."
-  GOFILE_TOKEN=$(gofile_get_account_token)
-  if [ -z "$GOFILE_TOKEN" ]; then
-    err "Không lấy được GoFile token. Kiểm tra mạng / GoFile đang bảo trì."
-    return 1
-  fi
-  say "Đã có GoFile token."
-
-  # ---------- HỎI SỐ CLONE ----------
   echo
   while true; do
     printf "Bạn muốn tải bao nhiêu clone? (nhập số): "
@@ -427,51 +381,39 @@ main() {
   fi
   BANANA_KEY=$(printf '%s' "$BANANA_KEY" | tr -cd 'A-Za-z0-9_-')
 
-  # ---------- QUICKBUBBLE ----------
   echo
   QB_MSG="QuickBubble: chưa cài"
   qb="$WORK/QuickBubble.apk"
-  printf "Tải QuickBubble.apk từ GoFile ... "
-  qb_link=$(gofile_get_file_link "$CONTENT_ID" "$GOFILE_PASSWORD" "QuickBubble.apk" "$GOFILE_TOKEN")
-  if [ -z "$qb_link" ]; then
-    echo "không thấy trên GoFile"
-    QB_MSG="QuickBubble: KHÔNG THẤY TRÊN GOFILE"
+  printf "Tải QuickBubble.apk ... "
+  code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$qb" -w '%{http_code}' "$BASE_URL/QuickBubble.apk" </dev/null)
+  if [ "$code" != "200" ] || [ ! -s "$qb" ]; then
+    rm -f "$qb"; echo "lỗi tải (HTTP $code)"; QB_MSG="QuickBubble: LỖI TẢI"
   else
-    code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$qb" -w '%{http_code}' "$qb_link" </dev/null)
-    if [ "$code" != "200" ] || [ ! -s "$qb" ]; then
-      rm -f "$qb"; echo "lỗi tải (HTTP $code)"; QB_MSG="QuickBubble: LỖI TẢI"
+    printf "xong, đang cài ... "
+    if install_apk "$qb" "QuickBubble"; then
+      echo "OK"; QB_MSG="QuickBubble: đã cài"; rm -f "$qb"
     else
-      printf "xong, đang cài ... "
-      if install_apk "$qb" "QuickBubble"; then
-        echo "OK"; QB_MSG="QuickBubble: đã cài"; rm -f "$qb"
-      else
-        echo "lỗi cài"; QB_MSG="QuickBubble: LỖI CÀI"
-      fi
+      echo "lỗi cài"; QB_MSG="QuickBubble: LỖI CÀI"
     fi
   fi
 
   OK_LIST=(); FAIL_LIST=(); STOPPED_AT=""; PKG_MAP=()
   declare -A DB_MAP=()
-
-  # ---------- TẢI SONG SONG TỪ GOFILE ----------
+  
+  # TẢI SONG SONG
   echo
-  say "Đang tải song song $COUNT file APK từ GoFile..."
+  say "Đang tải song song $COUNT file APK..."
   for ((i=1; i<=COUNT; i++)); do
-    f="$WORK/$i.apk"; fn="$i.apk"
+    f="$WORK/$i.apk"; url="$BASE_URL/$i.apk"
     (
-      link=$(gofile_get_file_link "$CONTENT_ID" "$GOFILE_PASSWORD" "$fn" "$GOFILE_TOKEN")
-      if [ -z "$link" ]; then
-        echo "404" > "$WORK/$i.code"
-        exit 0
-      fi
-      code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$f" -w '%{http_code}' "$link" </dev/null)
+      code=$(curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$f" -w '%{http_code}' "$url" </dev/null)
       echo "$code" > "$WORK/$i.code"
     ) &
   done
   wait
   say "Đã tải xong toàn bộ. Bắt đầu cài đặt tuần tự..."
 
-  # ---------- CÀI ĐẶT TUẦN TỰ ----------
+  # CÀI ĐẶT TUẦN TỰ
   echo
   for ((i=1; i<=COUNT; i++)); do
     f="$WORK/$i.apk"
@@ -482,7 +424,7 @@ main() {
       rm -f "$f"
       echo "không có file"
       if [ "$i" = "1" ]; then
-        warn "Không thấy 1.apk trên GoFile: kiểm tra link, mật khẩu, và tên file phải đúng 1.apk, 2.apk..."
+        warn "Không thấy 1.apk: kiểm tra lại GH_USER / GH_REPO / GH_TAG và repo phải để Public."
       fi
       STOPPED_AT="$i"
       break
@@ -507,13 +449,11 @@ main() {
     fi
   done
 
-  # ---------- DELTA CONFIG ----------
   DELTA_MSG="Config Delta: bỏ qua (không nhập key)"
   if [ -n "$BANANA_KEY" ]; then
     if make_delta_config; then DELTA_MSG="Config Delta: đã tạo"; else DELTA_MSG="Config Delta: TẠO LỖI"; fi
   fi
 
-  # ---------- LOGIN COOKIE ----------
   LOGIN_MSG="Login Roblox: bỏ qua"
   if [ ${#OK_LIST[@]} -gt 0 ]; then
     write_cookie_script
